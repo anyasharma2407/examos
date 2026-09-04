@@ -1,0 +1,481 @@
+// ExamOS database schema.
+// Every user-owned row is reachable from User; queries must always scope by userId.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+// Connection URLs live in prisma.config.ts (Prisma 7); the runtime client is
+// constructed with the node-postgres driver adapter in src/lib/db.ts.
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum TargetGrade {
+  PASS
+  CREDIT
+  DISTINCTION
+  HIGH_DISTINCTION
+}
+
+enum ExamType {
+  FINAL
+  MIDTERM
+  QUIZ
+  ASSIGNMENT
+}
+
+enum MaterialKind {
+  PDF
+  DOCX
+  PPTX
+  TXT
+}
+
+/// Lifecycle of an uploaded file. Mirrors the states shown in the UI.
+enum MaterialStatus {
+  UPLOADING
+  PROCESSING
+  ANALYSING
+  READY
+  FAILED
+}
+
+enum QuestionType {
+  MULTIPLE_CHOICE
+  NUMERIC
+  SHORT_ANSWER
+}
+
+enum Difficulty {
+  EASY
+  MEDIUM
+  HARD
+}
+
+enum StudyTaskType {
+  PRACTICE
+  REVIEW_MISTAKES
+  CONCEPT_REVIEW
+  SPACED_REVIEW
+}
+
+// ---------------------------------------------------------------------------
+// Identity
+// ---------------------------------------------------------------------------
+
+/// Mirror of a Supabase `auth.users` row. `id` is the Supabase user UUID; we
+/// never store credentials ourselves.
+model User {
+  id        String   @id @db.Uuid
+  email     String   @unique
+  name      String?
+  /// Rows created by `prisma/seed.ts`. Never set in production.
+  isDemo    Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  courses    Course[]
+  attempts   PracticeAttempt[]
+  mistakes   Mistake[]
+  studyPlans StudyPlan[]
+
+  @@index([isDemo])
+}
+
+// ---------------------------------------------------------------------------
+// Course
+// ---------------------------------------------------------------------------
+
+model Course {
+  id     String @id @default(cuid())
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name String
+  code String
+
+  targetGrade        TargetGrade @default(CREDIT)
+  /// Minutes the student can study for this course each week.
+  weeklyStudyMinutes Int         @default(480)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  exams      Exam[]
+  materials  Material[]
+  topics     Topic[]
+  questions  Question[]
+  attempts   PracticeAttempt[]
+  mistakes   Mistake[]
+  studyPlans StudyPlan[]
+
+  @@unique([userId, code])
+  @@index([userId])
+}
+
+/// An assessment for a course. The `FINAL` exam drives readiness and the
+/// study-plan deadline; other rows let the planner react to nearer assessments.
+model Exam {
+  id       String @id @default(cuid())
+  courseId String
+  course   Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  title     String
+  type      ExamType @default(FINAL)
+  date      DateTime
+  /// Contribution to the final course grade, 0..1. Optional.
+  weight    Float?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  studyPlans StudyPlan[]
+
+  @@index([courseId, date])
+}
+
+// ---------------------------------------------------------------------------
+// Materials & extracted content
+// ---------------------------------------------------------------------------
+
+model Material {
+  id       String @id @default(cuid())
+  courseId String
+  course   Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  filename    String
+  kind        MaterialKind
+  mimeType    String
+  sizeBytes   Int
+  /// Path inside the private storage bucket, always prefixed with the owner id.
+  storagePath String       @unique
+
+  status      MaterialStatus @default(UPLOADING)
+  /// Human-readable reason shown in the UI when `status` is FAILED.
+  statusError String?
+  charCount   Int            @default(0)
+  processedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  chunks        MaterialChunk[]
+  topicSources  TopicSource[]
+  questions     Question[]
+  guideReadings GuideReading[]
+
+  @@index([courseId, status])
+}
+
+/// A contiguous slice of extracted text. Chunks are the unit of grounding: the
+/// AI layer only ever sees chunk text, and citations point back at `index`.
+model MaterialChunk {
+  id         String   @id @default(cuid())
+  materialId String
+  material   Material @relation(fields: [materialId], references: [id], onDelete: Cascade)
+
+  /// 0-based position within the material.
+  index      Int
+  content    String
+  charCount  Int
+  /// Best-effort page/slide number when the extractor can supply one.
+  pageNumber Int?
+
+  createdAt DateTime @default(now())
+
+  topicSources  TopicSource[]
+  guideReadings GuideReading[]
+
+  @@unique([materialId, index])
+  @@index([materialId])
+}
+
+// ---------------------------------------------------------------------------
+// Knowledge map
+// ---------------------------------------------------------------------------
+
+model Topic {
+  id       String @id @default(cuid())
+  courseId String
+  course   Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  name        String
+  description String
+  /// Display order in the knowledge map.
+  position    Int    @default(0)
+  /// How central the topic is to the course, 0..1, estimated by the AI layer
+  /// from how much of the material covers it.
+  importance  Float  @default(0.5)
+
+  // --- mastery state (owned by lib/mastery) ---
+  /// 0..1 estimate of how well the student knows this topic.
+  masteryScore    Float     @default(0)
+  /// 0..1 confidence in `masteryScore`; grows with evidence, decays with time.
+  masteryStrength Float     @default(0)
+  attemptCount    Int       @default(0)
+  correctCount    Int       @default(0)
+  lastPracticedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sources    TopicSource[]
+  questions  Question[]
+  attempts   PracticeAttempt[]
+  mistakes   Mistake[]
+  studyTasks StudyTask[]
+  guide      TopicGuide?
+
+  @@unique([courseId, name])
+  @@index([courseId])
+}
+
+/// Evidence linking a topic back to the uploaded material it came from.
+model TopicSource {
+  id      String @id @default(cuid())
+  topicId String
+  topic   Topic  @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  materialId String
+  material   Material @relation(fields: [materialId], references: [id], onDelete: Cascade)
+
+  chunkId String?
+  chunk   MaterialChunk? @relation(fields: [chunkId], references: [id], onDelete: SetNull)
+
+  /// Short verbatim quote from the material supporting this topic.
+  excerpt String
+
+  @@index([topicId])
+  @@index([materialId])
+}
+
+// ---------------------------------------------------------------------------
+// Practice
+// ---------------------------------------------------------------------------
+
+model Question {
+  id       String @id @default(cuid())
+  courseId String
+  course   Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  topicId String
+  topic   Topic  @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  type       QuestionType
+  difficulty Difficulty   @default(MEDIUM)
+
+  prompt String
+  /// MULTIPLE_CHOICE only: the answer options in display order.
+  choices String[]     @default([])
+  /// Canonical answer. For MULTIPLE_CHOICE this is the exact option text; for
+  /// NUMERIC the decimal value as a string; for SHORT_ANSWER a model answer.
+  answer  String
+  /// Absolute tolerance for NUMERIC grading.
+  tolerance Float?
+  /// Accepted alternative phrasings / equivalent forms for SHORT_ANSWER.
+  acceptableAnswers String[] @default([])
+
+  explanation String
+  hint        String?
+
+  sourceMaterialId String?
+  sourceMaterial   Material? @relation(fields: [sourceMaterialId], references: [id], onDelete: SetNull)
+  sourceExcerpt    String?
+
+  archived  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  attempts   PracticeAttempt[]
+  mistakes   Mistake[]
+
+  @@index([courseId, topicId])
+  @@index([topicId, difficulty])
+}
+
+model PracticeAttempt {
+  id     String @id @default(cuid())
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  courseId String
+  course   Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  topicId String
+  topic   Topic  @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  questionId String
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  answer     String
+  isCorrect  Boolean
+  /// 0..1 partial credit; 1 when `isCorrect`.
+  score      Float      @default(0)
+  difficulty Difficulty
+  /// Wall-clock seconds the student spent on the question.
+  timeSpentS Int        @default(0)
+
+  studyTaskId String?
+  studyTask   StudyTask? @relation(fields: [studyTaskId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  mistake Mistake?
+
+  @@index([userId, courseId, createdAt])
+  @@index([topicId, createdAt])
+}
+
+/// Written for every incorrect attempt so weaknesses can be surfaced and
+/// re-drilled without re-scanning every attempt.
+model Mistake {
+  id     String @id @default(cuid())
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  courseId String
+  course   Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  topicId String
+  topic   Topic  @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  questionId String
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  attemptId String          @unique
+  attempt   PracticeAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+
+  givenAnswer   String
+  correctAnswer String
+  difficulty    Difficulty
+  /// Cleared once the student answers the same question correctly later.
+  resolvedAt    DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, courseId, createdAt])
+  @@index([topicId, resolvedAt])
+}
+
+// ---------------------------------------------------------------------------
+// Study planning
+// ---------------------------------------------------------------------------
+
+/// One generated plan per user/course/day.
+model StudyPlan {
+  id     String @id @default(cuid())
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  courseId String
+  course   Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  examId String?
+  exam   Exam?   @relation(fields: [examId], references: [id], onDelete: SetNull)
+
+  /// Local calendar date the plan is for, stored at UTC midnight.
+  planDate         DateTime @db.Date
+  totalMinutes     Int
+  /// Snapshot of the readiness score when the plan was generated, 0..100.
+  readinessScore   Int
+  /// One-line rationale shown to the student.
+  summary          String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tasks StudyTask[]
+
+  @@unique([userId, courseId, planDate])
+  @@index([userId, planDate])
+}
+
+model StudyTask {
+  id     String    @id @default(cuid())
+  planId String
+  plan   StudyPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  topicId String
+  topic   Topic  @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  type         StudyTaskType
+  /// Display order within the plan; lowest first.
+  position     Int           @default(0)
+  minutes      Int
+  questionCount Int          @default(0)
+  /// Why this task was scheduled, e.g. "4 recent mistakes in conditional probability".
+  reason       String
+
+  completedAt DateTime?
+
+  attempts PracticeAttempt[]
+
+  @@index([planId, position])
+  @@index([topicId])
+}
+
+// ---------------------------------------------------------------------------
+// Study guides
+// ---------------------------------------------------------------------------
+
+/// A generated study guide for one topic.
+///
+/// Cached rather than regenerated per page view: each one costs a model call
+/// over a slice of the course material. Regenerating is explicit.
+model TopicGuide {
+  id      String @id @default(cuid())
+  topicId String @unique
+  topic   Topic  @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  /// Plain-language explanation of the topic, grounded in the student's material.
+  summary  String
+  /// The handful of things that must be understood, in order.
+  keyIdeas String[] @default([])
+  /// Mistakes students actually make here, drawn from the material where possible.
+  pitfalls String[] @default([])
+
+  /// Phrases to search for video explanations. Deliberately search terms and
+  /// not video ids or URLs: a model inventing a YouTube id yields a dead link,
+  /// while a search always resolves to something real.
+  videoSearches    String[] @default([])
+  /// Widely-used textbooks for the subject. NOT from the student's material,
+  /// and labelled as such wherever it is shown.
+  suggestedReading String[] @default([])
+
+  generatedAt DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  readings GuideReading[]
+
+  @@index([topicId])
+}
+
+/// "Read this part of your own material, and here is why."
+///
+/// Points at a real chunk so the reference is exact and survives as long as the
+/// material does; deleting the material removes the reading with it.
+model GuideReading {
+  id      String     @id @default(cuid())
+  guideId String
+  guide   TopicGuide @relation(fields: [guideId], references: [id], onDelete: Cascade)
+
+  materialId String
+  material   Material @relation(fields: [materialId], references: [id], onDelete: Cascade)
+
+  chunkId String?
+  chunk   MaterialChunk? @relation(fields: [chunkId], references: [id], onDelete: SetNull)
+
+  position Int    @default(0)
+  /// What to look for in that part of the document.
+  focus    String
+  /// Why it is worth reading for this topic.
+  reason   String
+
+  @@index([guideId, position])
+  @@index([materialId])
+}
