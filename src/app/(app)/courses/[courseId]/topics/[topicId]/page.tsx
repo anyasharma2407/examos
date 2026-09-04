@@ -17,6 +17,12 @@ import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { requireOwnedTopic } from "@/lib/study";
 
+/**
+ * Hosts study-guide generation (~13s), question generation (~27s) and the
+ * tutor (~11s).
+ */
+export const maxDuration = 60;
+
 export const dynamic = "force-dynamic";
 
 export async function generateMetadata({

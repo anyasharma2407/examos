@@ -15,15 +15,12 @@ export async function proxy(request: NextRequest) {
 export const config = {
   matcher: [
     /*
-     * Every path except Next.js internals, static assets, and the material
-     * upload route.
+     * Every path except Next.js internals and static assets, so the auth cookie
+     * is refreshed on normal navigations without burning work on images.
      *
-     * The upload route is excluded deliberately: when a proxy matches a
-     * request, Next.js buffers the entire body in memory so it can be read
-     * twice, capped at 10MB by default — which would silently truncate a large
-     * PDF. Skipping it here costs nothing, because that route authenticates
-     * with `requireUser()` and checks course ownership itself.
+     * No upload path needs excluding: files go from the browser straight to
+     * storage, so no request the proxy sees ever carries a large body.
      */
-    "/((?!_next/static|_next/image|favicon.ico|api/materials/upload|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
   ],
 };

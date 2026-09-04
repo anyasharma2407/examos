@@ -19,9 +19,22 @@ import type { MaterialKind } from "@/generated/prisma/enums";
  *  2. `serverActions.bodySizeLimit` in next.config.ts (one file per request)
  *  3. the storage backend's own cap — `[storage] file_size_limit` in
  *     supabase/config.toml locally; on hosted Supabase it is a project setting
- *     (50MB on the free plan, higher on paid plans)
+ *     that varies by plan
+ *
+ * Set `NEXT_PUBLIC_MAX_UPLOAD_MB` to match whichever of those is lowest in a
+ * given deployment. Accepting a file the storage backend will then reject is
+ * the worst outcome: the student waits through the whole upload to be told no.
+ * It is public because the picker and the drop zone display the limit.
  */
-export const MAX_FILE_BYTES = 100 * 1024 * 1024;
+function resolveMaxFileBytes(): number {
+  const configured = Number(process.env.NEXT_PUBLIC_MAX_UPLOAD_MB);
+  if (Number.isFinite(configured) && configured > 0) {
+    return Math.round(configured) * 1024 * 1024;
+  }
+  return 100 * 1024 * 1024;
+}
+
+export const MAX_FILE_BYTES = resolveMaxFileBytes();
 
 /**
  * How many files one selection may contain. They are uploaded one request at a

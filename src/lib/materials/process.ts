@@ -5,6 +5,7 @@ import { chunkText } from "@/lib/materials/chunk";
 import { cleanExtractedText, hasUsefulText, MIN_USEFUL_CHARS } from "@/lib/materials/clean";
 import { extractText } from "@/lib/materials/extract";
 import { downloadMaterial } from "@/lib/materials/storage";
+import { validateContent } from "@/lib/materials/validation";
 
 /**
  * Document processing: storage object -> extracted text -> chunks.
@@ -12,6 +13,11 @@ import { downloadMaterial } from "@/lib/materials/storage";
  * Runs after the upload response has been sent (see the Server Action's
  * `after()` call), so a slow PDF never blocks the page. Progress is recorded on
  * the material row, which is what the UI polls.
+ *
+ * This is also where the file's actual bytes are checked against the type it
+ * claimed to be. Files are uploaded straight from the browser to storage, so
+ * this is the first moment the server sees them — and the only check a client
+ * cannot influence.
  *
  * This function must never throw: it is invoked detached from any request, so
  * an unhandled rejection would leave a material stuck on PROCESSING forever
@@ -49,6 +55,13 @@ export async function processMaterial(materialId: string): Promise<void> {
     const bytes = await downloadMaterial(material.storagePath);
     if (!bytes) {
       await markFailed(materialId, "The stored file could not be read back.");
+      return;
+    }
+
+    // The declared type was the client's word for it; the bytes are the truth.
+    const content = validateContent(material.kind, bytes.subarray(0, 1024));
+    if (!content.ok) {
+      await markFailed(materialId, content.reason);
       return;
     }
 

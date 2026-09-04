@@ -8,6 +8,11 @@ import { requireOwnedCourse } from "@/lib/courses";
 import { prisma } from "@/lib/db";
 
 export const metadata: Metadata = { title: "Practice" };
+/**
+ * Submitting a short answer may call the model to mark it.
+ */
+export const maxDuration = 30;
+
 export const dynamic = "force-dynamic";
 
 /**

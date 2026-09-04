@@ -3,6 +3,11 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { AlertCircle, Loader2, Upload } from "lucide-react";
+import {
+  finishUploadAction,
+  startUploadAction,
+} from "@/app/(app)/courses/[courseId]/materials/upload-actions";
+import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import type { UploadResult } from "@/lib/materials/types";
 import { Button } from "@/components/ui/button";
 import {
@@ -16,15 +21,70 @@ import { cn } from "@/lib/utils";
 /**
  * Drop zone + file picker for course material.
  *
- * Files are POSTed one at a time to /api/materials/upload rather than as one
- * large multipart body: that keeps a big selection from buffering hundreds of
- * megabytes on the server, lets each file start being read while the next
- * uploads, and means one rejected file does not take the rest of the batch
- * with it.
+ * Each file goes straight from the browser to Supabase Storage using a signed
+ * URL the server mints, so the bytes never pass through the app server. That is
+ * what allows 100MB uploads on a host whose functions cap request bodies at a
+ * few megabytes, and it keeps a large batch from costing the server anything
+ * but two small round trips per file.
  *
- * The route handler does the real validation; the checks here only exist to
- * give instant feedback, and nothing from this component is trusted.
+ * Files are handled one at a time so each starts being read while the next
+ * uploads, and one rejected file does not take the rest of the batch with it.
+ *
+ * The server does the real validation — the checks here only give instant
+ * feedback, and nothing from this component is trusted.
  */
+/**
+ * Uploads one file: ask the server for a target, PUT the bytes to storage,
+ * then tell the server it landed.
+ *
+ * Never throws — a failure becomes a result so the rest of the batch continues,
+ * and the server is always told, so a row is never left stuck on "Uploading".
+ */
+async function uploadOne(courseId: string, file: File): Promise<UploadResult> {
+  const started = await startUploadAction({
+    courseId,
+    filename: file.name,
+    mimeType: file.type,
+    sizeBytes: file.size,
+  });
+
+  if (!started.ok) {
+    // A sentinel rather than a message, so the wording lives in the UI.
+    if (started.error === "__DUPLICATE__") {
+      return { status: "skipped", filename: file.name };
+    }
+    return { status: "failed", filename: file.name, error: started.error };
+  }
+
+  try {
+    const supabase = createSupabaseBrowserClient();
+    const { error } = await supabase.storage
+      .from(started.bucket)
+      .uploadToSignedUrl(started.path, started.token, file, {
+        contentType: file.type || "application/octet-stream",
+      });
+
+    if (error) throw error;
+  } catch (error) {
+    const reason =
+      error instanceof Error && /exceeded the maximum allowed size/i.test(error.message)
+        ? "Storage rejected this file for being too large."
+        : "The upload did not complete. Check your connection and try again.";
+
+    // Tell the server, so the material is marked failed rather than left
+    // sitting on "Uploading" forever.
+    await finishUploadAction({
+      courseId,
+      materialId: started.materialId,
+      failed: reason,
+    }).catch(() => undefined);
+
+    return { status: "failed", filename: started.filename, error: reason };
+  }
+
+  return finishUploadAction({ courseId, materialId: started.materialId });
+}
+
 export function UploadDropzone({ courseId }: { courseId: string }) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -59,25 +119,7 @@ export function UploadDropzone({ courseId }: { courseId: string }) {
       for (const [index, file] of batch.entries()) {
         setProgress({ done: index, total: batch.length });
 
-        const formData = new FormData();
-        formData.append("courseId", courseId);
-        formData.append("file", file);
-
-        try {
-          const response = await fetch("/api/materials/upload", {
-            method: "POST",
-            body: formData,
-          });
-          collected.push((await response.json()) as UploadResult);
-        } catch {
-          // A dropped connection, or the tab going away mid-upload. Keep going:
-          // one bad file should not abandon the rest of the batch.
-          collected.push({
-            status: "failed",
-            filename: file.name,
-            error: "This file could not be sent. Check your connection and try again.",
-          });
-        }
+        collected.push(await uploadOne(courseId, file));
 
         // Show each file's outcome as it lands rather than only at the end.
         setResults([...collected]);

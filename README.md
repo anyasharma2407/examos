@@ -426,16 +426,66 @@ nothing else.
 
 ## Deployment
 
-1. Provision PostgreSQL and set `DATABASE_URL` / `DIRECT_URL`.
-2. Set the Supabase and OpenAI variables in the host's environment. Only the two
-   `NEXT_PUBLIC_*` values may be exposed to the browser.
-3. Run `npm run db:deploy` as a release step.
-4. Build with `npm run build` and serve with `npm start`. Any Node.js host works;
-   the app uses the Node runtime throughout (Next.js 16's `proxy` does not
-   support the edge runtime).
-5. Update the Supabase *Site URL* and redirect allow-list to the deployed origin.
+Verified against Vercel + hosted Supabase. Any Node host works too.
 
----
+### 1. Supabase project
+
+Create a project at supabase.com (free tier is enough), then collect:
+
+| Value | Where |
+| ----- | ----- |
+| `DATABASE_URL` | Project Settings → Database → **pooled** connection string |
+| `DIRECT_URL` | same page → **direct** connection string |
+| `NEXT_PUBLIC_SUPABASE_URL` | Project Settings → API → Project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | same page → anon/public key |
+| `SUPABASE_SERVICE_ROLE_KEY` | same page → service_role key (**server only**) |
+
+Then, in the project:
+
+- **Authentication → URL Configuration** — set the Site URL to your deployed
+  origin and allow `<origin>/auth/confirm` as a redirect.
+- **Storage** — check the per-file size limit for your plan and set
+  `NEXT_PUBLIC_MAX_UPLOAD_MB` to match. Accepting a file storage will then
+  reject makes the student wait through a whole upload to be told no.
+
+Apply the schema from your machine, pointing at the new database:
+
+```bash
+DIRECT_URL="<direct connection string>" npx prisma migrate deploy
+```
+
+The `course-material` storage bucket is created on first upload; nothing to do
+by hand.
+
+### 2. Deploy
+
+Import the repository on Vercel and set every variable from the table above,
+plus `OPENAI_API_KEY` and `OPENAI_MODEL`. Vercel builds with `npm run build`,
+which runs `prisma generate` first.
+
+Add `npx prisma migrate deploy` as a release step (or run it manually) whenever
+a migration ships.
+
+### Why uploads go straight to storage
+
+Vercel caps a function's request body at **4.5MB**, so a lecture PDF cannot be
+uploaded *through* the app server. Files therefore go browser → Supabase
+Storage directly, using a short-lived signed URL the server mints only after
+checking that the caller owns the course. The server picks the storage path
+from the signed-in user's id, so a client cannot choose where its file lands.
+
+Because the server never sees the bytes at upload time, the content check —
+confirming a file's leading bytes match the type it claims — happens during
+processing instead, when the object is downloaded. That is the one check a
+client cannot influence, and it is what stops a renamed executable being
+accepted on the strength of its extension.
+
+### Function duration
+
+The AI routes declare `maxDuration` because they are genuinely slow: about 16s
+to build a knowledge map, 13s for a study guide, and 30s to write questions
+across several topics concurrently. Vercel allows 300s on every plan, so these
+fit comfortably; other platforms may need the equivalent setting raised.
 
 ## A note on the readiness score
 

@@ -8,6 +8,13 @@ import { ACCEPTED_TYPES, MAX_FILE_BYTES, formatBytes } from "@/lib/materials/con
  * extension are both attacker-controlled, so the file's leading bytes are
  * checked too: renaming `payload.exe` to `notes.pdf` must not get past this.
  *
+ * The two checks are separate because they happen at different moments. Files
+ * are uploaded straight from the browser to storage, so the server sees the
+ * name and size *before* the upload (`validateUploadMetadata`) but the bytes
+ * only *after* it, when processing downloads the object (`validateContent`).
+ * Splitting them keeps the content check — a client could otherwise claim any
+ * type it liked and never be contradicted.
+ *
  * Pure and synchronous so it can be exhaustively unit-tested.
  */
 
@@ -84,7 +91,12 @@ export function sanitiseFilename(filename: string): string {
   return cleaned.slice(0, 120) || "file";
 }
 
-export function validateUpload(candidate: UploadCandidate): ValidationResult {
+/** Everything knowable before a byte has been uploaded. */
+export function validateUploadMetadata(candidate: {
+  filename: string;
+  mimeType: string;
+  size: number;
+}): ValidationResult {
   const safeFilename = sanitiseFilename(candidate.filename);
 
   if (candidate.size === 0) {
@@ -113,19 +125,44 @@ export function validateUpload(candidate: UploadCandidate): ValidationResult {
     };
   }
 
-  const contentMatches =
-    byExtension.kind === "PDF"
-      ? containsPdfSignature(candidate.head)
-      : byExtension.kind === "TXT"
-        ? looksLikeText(candidate.head)
-        : startsWith(candidate.head, ZIP_SIGNATURE);
-
-  if (!contentMatches) {
-    return {
-      ok: false,
-      reason: `That file does not look like a ${byExtension.label}. It may be corrupt or renamed.`,
-    };
-  }
-
   return { ok: true, kind: byExtension.kind, safeFilename };
+}
+
+/**
+ * Checks the stored bytes against the type that was claimed.
+ *
+ * Runs during processing, once the object has been downloaded. This is the only
+ * check the client cannot influence, so it is what actually stops a renamed
+ * executable being treated as a PDF.
+ */
+export function validateContent(
+  kind: MaterialKind,
+  head: Uint8Array,
+): { ok: true } | { ok: false; reason: string } {
+  const type = ACCEPTED_TYPES.find((candidate) => candidate.kind === kind)!;
+
+  const matches =
+    kind === "PDF"
+      ? containsPdfSignature(head)
+      : kind === "TXT"
+        ? looksLikeText(head)
+        : startsWith(head, ZIP_SIGNATURE);
+
+  return matches
+    ? { ok: true }
+    : {
+        ok: false,
+        reason: `That file does not look like a ${type.label}. It may be corrupt or renamed.`,
+      };
+}
+
+/** Both checks at once, for callers that already hold the bytes. */
+export function validateUpload(candidate: UploadCandidate): ValidationResult {
+  const metadata = validateUploadMetadata(candidate);
+  if (!metadata.ok) return metadata;
+
+  const content = validateContent(metadata.kind, candidate.head);
+  if (!content.ok) return { ok: false, reason: content.reason };
+
+  return metadata;
 }

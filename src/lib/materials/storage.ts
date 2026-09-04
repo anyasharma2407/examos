@@ -11,9 +11,15 @@ import { MATERIAL_BUCKET } from "@/lib/materials/constants";
  * ownership of the course has been checked — so there are no storage RLS
  * policies to get wrong, and a leaked object path is not enough to read a file.
  *
- * Object keys are always `<userId>/<courseId>/<materialId>-<filename>`. The
- * user id prefix means a path built for one user can never address another
- * user's object, even if a bug let an unvalidated id through.
+ * Object keys are always `<userId>/<courseId>/<materialId>-<filename>`, and are
+ * always built on the server from the signed-in user's id. The client never
+ * supplies a path, so a path built for one user can never address another
+ * user's object even if a bug let an unvalidated id through.
+ *
+ * Files travel browser -> storage directly, using a short-lived signed upload
+ * URL minted here after the caller's ownership of the course has been checked.
+ * Routing the bytes through the app server instead would cap uploads at
+ * whatever the host allows in a request body (4.5MB on Vercel).
  */
 
 /**
@@ -79,6 +85,58 @@ export async function uploadMaterial(
   }
 
   return { ok: true };
+}
+
+/**
+ * A one-time URL the browser can PUT a single object to.
+ *
+ * Scoped to exactly this path, so it grants no access to anything else, and it
+ * cannot be used to overwrite an existing object.
+ */
+export async function createUploadUrl(
+  path: string,
+): Promise<{ ok: true; token: string; path: string } | { ok: false; reason: string }> {
+  await ensureBucket();
+
+  const supabase = createSupabaseAdminClient();
+  const { data, error } = await supabase.storage
+    .from(MATERIAL_BUCKET)
+    .createSignedUploadUrl(path);
+
+  if (error || !data) {
+    console.error("[materials] could not create upload url", error);
+    return { ok: false, reason: "Could not start the upload. Try again." };
+  }
+
+  return { ok: true, token: data.token, path: data.path };
+}
+
+/**
+ * Confirms an object actually arrived, and how big it really is.
+ *
+ * The size the client declared before uploading is not evidence of anything;
+ * this is what the stored object weighs.
+ */
+export async function statMaterial(
+  path: string,
+): Promise<{ exists: false } | { exists: true; sizeBytes: number }> {
+  const supabase = createSupabaseAdminClient();
+
+  const lastSlash = path.lastIndexOf("/");
+  const folder = path.slice(0, lastSlash);
+  const name = path.slice(lastSlash + 1);
+
+  const { data, error } = await supabase.storage
+    .from(MATERIAL_BUCKET)
+    .list(folder, { search: name, limit: 100 });
+
+  if (error || !data) return { exists: false };
+
+  const match = data.find((entry) => entry.name === name);
+  if (!match) return { exists: false };
+
+  const size = (match.metadata as { size?: number } | null)?.size;
+  return { exists: true, sizeBytes: typeof size === "number" ? size : 0 };
 }
 
 export async function downloadMaterial(path: string): Promise<Uint8Array | null> {

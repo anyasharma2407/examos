@@ -20,6 +20,14 @@ import {
 } from "@/lib/dates";
 import { cn } from "@/lib/utils";
 
+/**
+ * Hosts the knowledge-map build and course-wide question generation, both of
+ * which call the model. Measured: ~16s for a map, ~30s for questions across
+ * four topics run concurrently. Serverless platforms cut a function off at
+ * their own limit, so this asks for the headroom explicitly.
+ */
+export const maxDuration = 60;
+
 export const dynamic = "force-dynamic";
 
 export async function generateMetadata({
