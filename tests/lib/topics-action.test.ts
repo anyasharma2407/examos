@@ -12,11 +12,13 @@ const OWNER = "11111111-1111-1111-1111-111111111111";
 const courseFindFirst = vi.fn();
 const requireUser = vi.fn();
 const buildKnowledgeMap = vi.fn();
+const guardAi = vi.fn();
 
 vi.mock("@/lib/db", () => ({ prisma: { course: { findFirst: courseFindFirst } } }));
 vi.mock("@/lib/auth", () => ({ requireUser }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/topics", () => ({ buildKnowledgeMap }));
+vi.mock("@/lib/ai/guard", () => ({ guardAi }));
 
 const { buildKnowledgeMapAction } = await import(
   "@/app/(app)/courses/[courseId]/topics/actions"
@@ -32,6 +34,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   requireUser.mockResolvedValue({ id: OWNER, email: "owner@example.com", name: "Owner" });
   courseFindFirst.mockResolvedValue({ id: "course-1", name: "Discrete Maths", code: "MATH1061" });
+  guardAi.mockResolvedValue({ ok: true });
   buildKnowledgeMap.mockResolvedValue({
     ok: true,
     created: 6,
@@ -92,13 +95,31 @@ describe("buildKnowledgeMapAction", () => {
     expect(state.success).toBeUndefined();
   });
 
-  it("rate limits repeated rebuilds", async () => {
-    // The limiter is module-level, so drain it and check the next call is refused.
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-      await buildKnowledgeMapAction({}, form("course-1"));
-    }
+  it("goes through the shared guard, not a per-process limiter", async () => {
+    await buildKnowledgeMapAction({}, form("course-1"));
+
+    // Counting in one Node process is close to meaningless on a platform that
+    // runs many instances, so the limit and the budget live in the database.
+    expect(guardAi).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: OWNER, feature: "knowledge_map" }),
+    );
+  });
+
+  it("surfaces a guard refusal instead of doing the work", async () => {
+    guardAi.mockResolvedValue({ ok: false, error: "Try again in 5 minutes." });
+
     const state = await buildKnowledgeMapAction({}, form("course-1"));
 
-    expect(state.error).toMatch(/Try again in/);
+    expect(buildKnowledgeMap).not.toHaveBeenCalled();
+    expect(state.error).toBe("Try again in 5 minutes.");
+  });
+
+  it("checks ownership before spending a guard allowance", async () => {
+    courseFindFirst.mockResolvedValue(null);
+
+    await buildKnowledgeMapAction({}, form("someone-elses-course"));
+
+    // Otherwise probing other people's course ids would burn the caller's quota.
+    expect(guardAi).not.toHaveBeenCalled();
   });
 });

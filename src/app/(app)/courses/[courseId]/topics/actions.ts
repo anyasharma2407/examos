@@ -1,9 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { guardAi } from "@/lib/ai/guard";
 import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { FixedWindowRateLimiter } from "@/lib/rate-limit";
 import { buildKnowledgeMap } from "@/lib/topics";
 
 /**
@@ -14,8 +14,6 @@ import { buildKnowledgeMap } from "@/lib/topics";
  * ever used alongside the signed-in user's id.
  */
 
-/** 10 rebuilds per hour per user. Rebuilding is useful, but not constantly. */
-const buildLimiter = new FixedWindowRateLimiter(10, 60 * 60_000);
 
 export type BuildMapState = {
   error?: string;
@@ -39,13 +37,13 @@ export async function buildKnowledgeMapAction(
   });
   if (!course) return { error: "That course could not be found." };
 
-  const { allowed, retryAfterMs } = buildLimiter.check(user.id);
-  if (!allowed) {
-    const minutes = Math.max(1, Math.ceil(retryAfterMs / 60_000));
-    return {
-      error: `You have rebuilt your knowledge map several times just now. Try again in ${minutes} minute${minutes === 1 ? "" : "s"}.`,
-    };
-  }
+  const gate = await guardAi({
+    userId: user.id,
+    feature: "knowledge_map",
+    limit: 10,
+    windowMs: 60 * 60_000,
+  });
+  if (!gate.ok) return { error: gate.error };
 
   const outcome = await buildKnowledgeMap(course.id, course);
 

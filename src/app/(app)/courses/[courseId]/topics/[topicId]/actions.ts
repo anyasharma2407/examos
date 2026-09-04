@@ -3,9 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { askTutor } from "@/lib/ai/tutor";
 import type { SourceChunk } from "@/lib/ai/selection";
+import { guardAi } from "@/lib/ai/guard";
 import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { FixedWindowRateLimiter } from "@/lib/rate-limit";
 import { clearTopicFlashcards, generateTopicFlashcards } from "@/lib/flashcards";
 import { buildStudyGuide } from "@/lib/study";
 
@@ -17,12 +17,6 @@ import { buildStudyGuide } from "@/lib/study";
  * trusted on its own.
  */
 
-/** 30 guide generations per hour. Generous for a study session, not for a loop. */
-const guideLimiter = new FixedWindowRateLimiter(30, 60 * 60_000);
-/** 60 tutor questions per hour: a real conversation, without runaway spend. */
-const tutorLimiter = new FixedWindowRateLimiter(60, 60 * 60_000);
-/** 30 card sets per hour. */
-const flashcardLimiter = new FixedWindowRateLimiter(30, 60 * 60_000);
 
 export type GuideState = { error?: string };
 
@@ -38,11 +32,13 @@ export async function buildStudyGuideAction(
     return { error: "That topic could not be found." };
   }
 
-  const { allowed, retryAfterMs } = guideLimiter.check(user.id);
-  if (!allowed) {
-    const minutes = Math.max(1, Math.ceil(retryAfterMs / 60_000));
-    return { error: `That is a lot of guides at once. Try again in ${minutes} minute${minutes === 1 ? "" : "s"}.` };
-  }
+  const gate = await guardAi({
+    userId: user.id,
+    feature: "study_guide",
+    limit: 30,
+    windowMs: 60 * 60_000,
+  });
+  if (!gate.ok) return { error: gate.error };
 
   const outcome = await buildStudyGuide(topicId, user.id);
   if (!outcome.ok) return { error: outcome.error };
@@ -65,11 +61,13 @@ export async function generateFlashcardsAction(
     return { error: "That topic could not be found." };
   }
 
-  const { allowed, retryAfterMs } = flashcardLimiter.check(user.id);
-  if (!allowed) {
-    const minutes = Math.max(1, Math.ceil(retryAfterMs / 60_000));
-    return { error: `That is a lot of cards at once. Try again in ${minutes} minute${minutes === 1 ? "" : "s"}.` };
-  }
+  const gate = await guardAi({
+    userId: user.id,
+    feature: "flashcards",
+    limit: 30,
+    windowMs: 60 * 60_000,
+  });
+  if (!gate.ok) return { error: gate.error };
 
   // "replace" starts the set again; the default tops it up.
   if (formData.get("mode") === "replace") {
@@ -137,14 +135,13 @@ export async function askTutorAction(
   });
   if (!topic) return { turns, error: "That topic could not be found." };
 
-  const { allowed, retryAfterMs } = tutorLimiter.check(user.id);
-  if (!allowed) {
-    const minutes = Math.max(1, Math.ceil(retryAfterMs / 60_000));
-    return {
-      turns,
-      error: `You have asked a lot of questions just now. Try again in ${minutes} minute${minutes === 1 ? "" : "s"}.`,
-    };
-  }
+  const gate = await guardAi({
+    userId: user.id,
+    feature: "tutor",
+    limit: 60,
+    windowMs: 60 * 60_000,
+  });
+  if (!gate.ok) return { turns, error: gate.error };
 
   const citedIds = topic.sources
     .map((source) => source.chunkId)

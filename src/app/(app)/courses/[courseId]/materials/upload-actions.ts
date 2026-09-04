@@ -8,7 +8,7 @@ import { MATERIAL_BUCKET } from "@/lib/materials/constants";
 import { processMaterial } from "@/lib/materials/process";
 import { buildStoragePath, createUploadUrl, statMaterial } from "@/lib/materials/storage";
 import { validateUploadMetadata } from "@/lib/materials/validation";
-import { FixedWindowRateLimiter } from "@/lib/rate-limit";
+import { consume } from "@/lib/rate-limit-shared";
 import type { UploadResult } from "@/lib/materials/types";
 
 /**
@@ -34,7 +34,8 @@ import type { UploadResult } from "@/lib/materials/types";
  */
 
 /** 120 uploads per 10 minutes per user — generous for a semester's slides. */
-const uploadLimiter = new FixedWindowRateLimiter(120, 10 * 60_000);
+const UPLOAD_LIMIT = 120;
+const UPLOAD_WINDOW_MS = 10 * 60_000;
 
 export type StartUploadResult =
   | {
@@ -61,7 +62,12 @@ export async function startUploadAction(input: {
   });
   if (!course) return { ok: false, error: "That course could not be found." };
 
-  const { allowed, retryAfterMs } = uploadLimiter.check(user.id);
+  const { allowed, retryAfterMs } = await consume(
+    "upload",
+    user.id,
+    UPLOAD_LIMIT,
+    UPLOAD_WINDOW_MS,
+  );
   if (!allowed) {
     const minutes = Math.max(1, Math.ceil(retryAfterMs / 60_000));
     return {

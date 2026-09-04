@@ -1,10 +1,10 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { guardAi } from "@/lib/ai/guard";
 import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { generateCourseQuestions, generateTopicQuestions } from "@/lib/questions";
-import { FixedWindowRateLimiter } from "@/lib/rate-limit";
 import { submitAnswer, type SubmitResult } from "@/lib/practice/session";
 
 /**
@@ -14,10 +14,6 @@ import { submitAnswer, type SubmitResult } from "@/lib/practice/session";
  * owner, so a question belonging to someone else is simply not found.
  */
 
-/** Generation is the expensive one: 20 batches an hour is plenty. */
-const generateLimiter = new FixedWindowRateLimiter(20, 60 * 60_000);
-/** Answering is cheap unless it needs AI marking; this bounds that. */
-const answerLimiter = new FixedWindowRateLimiter(300, 60 * 60_000);
 
 export type GenerateQuestionsState = {
   error?: string;
@@ -38,13 +34,13 @@ export async function generateQuestionsAction(
     return { error: "That topic could not be found." };
   }
 
-  const { allowed, retryAfterMs } = generateLimiter.check(user.id);
-  if (!allowed) {
-    const minutes = Math.max(1, Math.ceil(retryAfterMs / 60_000));
-    return {
-      error: `That is a lot of question generation at once. Try again in ${minutes} minute${minutes === 1 ? "" : "s"}.`,
-    };
-  }
+  const gate = await guardAi({
+    userId: user.id,
+    feature: "questions",
+    limit: 20,
+    windowMs: 60 * 60_000,
+  });
+  if (!gate.ok) return { error: gate.error };
 
   const outcome = await generateTopicQuestions(topicId, user.id);
   if (!outcome.ok) return { error: outcome.error };
@@ -74,13 +70,13 @@ export async function generateAllQuestionsAction(
   const courseId = formData.get("courseId");
   if (typeof courseId !== "string") return { error: "That course could not be found." };
 
-  const { allowed, retryAfterMs } = generateLimiter.check(user.id);
-  if (!allowed) {
-    const minutes = Math.max(1, Math.ceil(retryAfterMs / 60_000));
-    return {
-      error: `That is a lot of question generation at once. Try again in ${minutes} minute${minutes === 1 ? "" : "s"}.`,
-    };
-  }
+  const gate = await guardAi({
+    userId: user.id,
+    feature: "questions_bulk",
+    limit: 20,
+    windowMs: 60 * 60_000,
+  });
+  if (!gate.ok) return { error: gate.error };
 
   const outcome = await generateCourseQuestions(courseId, user.id);
   if (!outcome.ok) return { error: outcome.error };
@@ -127,10 +123,13 @@ export async function submitAnswerAction(
     return { error: "Enter an answer first." };
   }
 
-  const { allowed } = answerLimiter.check(user.id);
-  if (!allowed) {
-    return { error: "You are answering very fast. Take a short break and try again." };
-  }
+  const gate = await guardAi({
+    userId: user.id,
+    feature: "answer",
+    limit: 300,
+    windowMs: 60 * 60_000,
+  });
+  if (!gate.ok) return { error: gate.error, questionId };
 
   const outcome = await submitAnswer({
     userId: user.id,

@@ -7,6 +7,8 @@ import {
   isUnsupportedTemperature,
   type AiFailureKind,
 } from "@/lib/ai/errors";
+import { recordUsage } from "@/lib/ai/budget";
+import { currentAiContext } from "@/lib/ai/context";
 import { serverEnv } from "@/lib/env";
 
 /**
@@ -30,8 +32,11 @@ import { serverEnv } from "@/lib/env";
 
 export type { AiFailureKind } from "@/lib/ai/errors";
 
+/** What a call actually cost, so a per-user budget can track real spend. */
+export type AiUsage = { inputTokens: number; outputTokens: number; model: string };
+
 export type AiResult<T> =
-  | { ok: true; data: T }
+  | { ok: true; data: T; usage?: AiUsage }
   | { ok: false; kind: AiFailureKind; error: string };
 
 export type GenerateJsonOptions<T> = {
@@ -48,6 +53,17 @@ export type GenerateJsonOptions<T> = {
   maxAttempts?: number;
   temperature?: number;
 };
+
+/** Reads the provider's own token accounting off a response. */
+function readUsage(response: unknown, model: string): AiUsage {
+  const usage = (response as { usage?: Record<string, number> } | null)?.usage;
+  return {
+    // Field names differ between APIs; fall back rather than guess wrongly.
+    inputTokens: usage?.input_tokens ?? usage?.prompt_tokens ?? 0,
+    outputTokens: usage?.output_tokens ?? usage?.completion_tokens ?? 0,
+    model,
+  };
+}
 
 export function isAiConfigured(): boolean {
   return Boolean(serverEnv().OPENAI_API_KEY);
@@ -188,7 +204,24 @@ export async function generateJson<T>(
 
       // The provider's own schema enforcement is not taken on trust.
       const validated = schema.safeParse(parsed);
-      if (validated.success) return { ok: true, data: validated.data };
+      if (validated.success) {
+        const usage = readUsage(response, env.OPENAI_MODEL);
+
+        // Recorded here rather than by callers: a budget that depends on every
+        // future feature remembering to report its usage is not a budget.
+        const context = currentAiContext();
+        if (context) {
+          await recordUsage({
+            userId: context.userId,
+            feature: context.feature,
+            model: usage.model,
+            inputTokens: usage.inputTokens,
+            outputTokens: usage.outputTokens,
+          });
+        }
+
+        return { ok: true, data: validated.data, usage };
+      }
 
       const issues = validated.error.issues
         .slice(0, 5)

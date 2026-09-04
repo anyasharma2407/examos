@@ -93,7 +93,28 @@ describe("output validation", () => {
       instruction: "i",
     });
 
-    expect(result).toEqual({ ok: true, data: { topics: ["Limits", "Integration"] } });
+    expect(result).toMatchObject({ ok: true, data: { topics: ["Limits", "Integration"] } });
+  });
+
+  it("reports what the call cost, so a per-user budget can track real spend", async () => {
+    create.mockResolvedValueOnce({
+      output_text: JSON.stringify({ topics: ["Limits"] }),
+      usage: { input_tokens: 1234, output_tokens: 56 },
+    });
+
+    const result = await generateJson({
+      schema,
+      schemaName: "topics",
+      system: "s",
+      instruction: "i",
+    });
+
+    // Counting calls would misprice wildly: a knowledge map over a semester's
+    // uploads and a one-line question are both "one call".
+    expect(result.ok && result.usage).toMatchObject({
+      inputTokens: 1234,
+      outputTokens: 56,
+    });
   });
 
   it("retries when the response is not valid JSON", async () => {

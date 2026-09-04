@@ -84,6 +84,7 @@ model User {
   attempts   PracticeAttempt[]
   mistakes   Mistake[]
   studyPlans StudyPlan[]
+  aiUsage    AiUsage[]
 
   @@index([isDemo])
 }
@@ -531,4 +532,45 @@ enum FlashcardKind {
   APPLICATION
   /// A mistake people reliably make here.
   PITFALL
+}
+
+// ---------------------------------------------------------------------------
+// Abuse and cost control
+// ---------------------------------------------------------------------------
+
+/// One fixed rate-limit window, shared across every server instance.
+///
+/// The in-process limiter this replaces counted per Node process. On a platform
+/// that scales to many concurrent instances that is barely a limit at all: ten
+/// instances means ten times the allowance, and the number is not knowable.
+/// Keeping the counter in the database makes the limit mean what it says.
+model RateLimit {
+  /// Scope plus subject, e.g. "ai:generate:<userId>".
+  key         String   @id
+  windowStart DateTime
+  count       Int      @default(0)
+
+  @@index([windowStart])
+}
+
+/// Tokens spent on one AI call, for per-user budgeting.
+///
+/// Every AI feature bills the operator's account, so without a per-user budget
+/// a single account can spend without bound. Recording actual usage rather than
+/// counting calls means the budget tracks what is really being spent — one
+/// enormous document costs far more than one small question.
+model AiUsage {
+  id     String @id @default(cuid())
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Which feature spent it, e.g. "knowledge_map", "flashcards".
+  feature      String
+  model        String
+  inputTokens  Int    @default(0)
+  outputTokens Int    @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
 }

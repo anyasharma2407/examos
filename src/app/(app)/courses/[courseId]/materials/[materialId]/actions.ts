@@ -1,8 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { guardAi } from "@/lib/ai/guard";
 import { requireUser } from "@/lib/auth";
-import { FixedWindowRateLimiter } from "@/lib/rate-limit";
 import { summariseChunk, summariseTopicReadings } from "@/lib/sections";
 
 /**
@@ -12,8 +12,6 @@ import { summariseChunk, summariseTopicReadings } from "@/lib/sections";
  * resolve the passage through its course's owner.
  */
 
-/** 120 sections an hour — a long reading session, not a scraper. */
-const summaryLimiter = new FixedWindowRateLimiter(120, 60 * 60_000);
 
 export type SummaryState = { error?: string; success?: string };
 
@@ -27,11 +25,13 @@ export async function summariseSectionAction(
   const path = formData.get("path");
   if (typeof chunkId !== "string") return { error: "That section could not be found." };
 
-  const { allowed, retryAfterMs } = summaryLimiter.check(user.id);
-  if (!allowed) {
-    const minutes = Math.max(1, Math.ceil(retryAfterMs / 60_000));
-    return { error: `That is a lot of summarising. Try again in ${minutes} minute${minutes === 1 ? "" : "s"}.` };
-  }
+  const gate = await guardAi({
+    userId: user.id,
+    feature: "summary",
+    limit: 120,
+    windowMs: 60 * 60_000,
+  });
+  if (!gate.ok) return { error: gate.error };
 
   const outcome = await summariseChunk(chunkId, user.id, {
     force: formData.get("mode") === "redo",
@@ -52,11 +52,13 @@ export async function summariseReadingsAction(
   const path = formData.get("path");
   if (typeof topicId !== "string") return { error: "That topic could not be found." };
 
-  const { allowed, retryAfterMs } = summaryLimiter.check(user.id);
-  if (!allowed) {
-    const minutes = Math.max(1, Math.ceil(retryAfterMs / 60_000));
-    return { error: `That is a lot of summarising. Try again in ${minutes} minute${minutes === 1 ? "" : "s"}.` };
-  }
+  const gate = await guardAi({
+    userId: user.id,
+    feature: "summary",
+    limit: 120,
+    windowMs: 60 * 60_000,
+  });
+  if (!gate.ok) return { error: gate.error };
 
   const outcome = await summariseTopicReadings(topicId, user.id);
   if (!outcome.ok) return { error: outcome.error };
