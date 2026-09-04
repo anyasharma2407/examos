@@ -9,6 +9,8 @@ import {
   Lightbulb,
   MonitorPlay,
 } from "lucide-react";
+import { FlashcardDeck, type DeckCard } from "@/components/flashcards/flashcard-deck";
+import { GenerateFlashcardsButton } from "@/components/flashcards/generate-flashcards-button";
 import { GenerateQuestionsButton } from "@/components/practice/generate-questions-button";
 import { BuildGuideButton } from "@/components/topics/build-guide-button";
 import { TutorPanel } from "@/components/topics/tutor-panel";
@@ -59,6 +61,14 @@ export default async function TopicPage({
   const questionCount = await prisma.question.count({
     where: { topicId: topic.id, archived: false },
   });
+
+  const cards: DeckCard[] = topic.flashcards.map((card) => ({
+    id: card.id,
+    kind: card.kind,
+    front: card.front,
+    back: card.back,
+    sourceFilename: card.sourceMaterial?.filename ?? null,
+  }));
 
   return (
     <div className="space-y-10">
@@ -246,6 +256,30 @@ export default async function TopicPage({
           </div>
         </>
       )}
+
+      <section
+        aria-labelledby="flashcards-heading"
+        className="space-y-4 border-t border-border pt-8"
+      >
+        <div>
+          <h2 id="flashcards-heading" className="font-medium">
+            Flashcards
+          </h2>
+          <p className="mt-1 max-w-xl text-sm text-muted-foreground text-pretty">
+            {cards.length > 0
+              ? `${cards.length} cards covering the definitions, rules, distinctions and traps in this topic. Read the front, answer it in your head, then reveal.`
+              : "Cards drilling the things you need to recall without thinking — what something is, the exact rule, how it differs from its neighbour, when to use it, and where people go wrong."}
+          </p>
+        </div>
+
+        {cards.length > 0 ? <FlashcardDeck cards={cards} /> : null}
+
+        <GenerateFlashcardsButton
+          courseId={courseId}
+          topicId={topic.id}
+          cardCount={cards.length}
+        />
+      </section>
 
       <section
         aria-labelledby="practice-heading"

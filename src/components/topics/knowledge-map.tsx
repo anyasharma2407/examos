@@ -10,6 +10,7 @@ export type KnowledgeMapTopic = {
   masteryScore: number;
   attemptCount: number;
   questionCount: number;
+  flashcardCount: number;
   sources: { id: string; filename: string; excerpt: string }[];
 };
 
@@ -76,9 +77,16 @@ export function KnowledgeMap({
           </p>
 
           <p className="mt-2 text-xs text-muted-foreground">
-            {topic.questionCount > 0
-              ? `${topic.questionCount} practice ${topic.questionCount === 1 ? "question" : "questions"}`
-              : "No practice questions yet"}
+            {[
+              topic.flashcardCount > 0
+                ? `${topic.flashcardCount} ${topic.flashcardCount === 1 ? "flashcard" : "flashcards"}`
+                : null,
+              topic.questionCount > 0
+                ? `${topic.questionCount} practice ${topic.questionCount === 1 ? "question" : "questions"}`
+                : null,
+            ]
+              .filter(Boolean)
+              .join(" · ") || "No flashcards or questions yet"}
           </p>
 
           {topic.sources.length > 0 ? (

@@ -6,6 +6,7 @@ import type { SourceChunk } from "@/lib/ai/selection";
 import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { FixedWindowRateLimiter } from "@/lib/rate-limit";
+import { clearTopicFlashcards, generateTopicFlashcards } from "@/lib/flashcards";
 import { buildStudyGuide } from "@/lib/study";
 
 /**
@@ -20,6 +21,8 @@ import { buildStudyGuide } from "@/lib/study";
 const guideLimiter = new FixedWindowRateLimiter(30, 60 * 60_000);
 /** 60 tutor questions per hour: a real conversation, without runaway spend. */
 const tutorLimiter = new FixedWindowRateLimiter(60, 60 * 60_000);
+/** 30 card sets per hour. */
+const flashcardLimiter = new FixedWindowRateLimiter(30, 60 * 60_000);
 
 export type GuideState = { error?: string };
 
@@ -46,6 +49,42 @@ export async function buildStudyGuideAction(
 
   revalidatePath(`/courses/${courseId}/topics/${topicId}`);
   return {};
+}
+
+export type FlashcardState = { error?: string; success?: string };
+
+export async function generateFlashcardsAction(
+  _previous: FlashcardState,
+  formData: FormData,
+): Promise<FlashcardState> {
+  const user = await requireUser();
+
+  const topicId = formData.get("topicId");
+  const courseId = formData.get("courseId");
+  if (typeof topicId !== "string" || typeof courseId !== "string") {
+    return { error: "That topic could not be found." };
+  }
+
+  const { allowed, retryAfterMs } = flashcardLimiter.check(user.id);
+  if (!allowed) {
+    const minutes = Math.max(1, Math.ceil(retryAfterMs / 60_000));
+    return { error: `That is a lot of cards at once. Try again in ${minutes} minute${minutes === 1 ? "" : "s"}.` };
+  }
+
+  // "replace" starts the set again; the default tops it up.
+  if (formData.get("mode") === "replace") {
+    await clearTopicFlashcards(topicId, user.id);
+  }
+
+  const outcome = await generateTopicFlashcards(topicId, user.id);
+  if (!outcome.ok) return { error: outcome.error };
+
+  revalidatePath(`/courses/${courseId}/topics/${topicId}`);
+  revalidatePath(`/courses/${courseId}`);
+
+  return {
+    success: `${outcome.created} new ${outcome.created === 1 ? "card" : "cards"} — ${outcome.total} in total.`,
+  };
 }
 
 export type TutorTurn = {

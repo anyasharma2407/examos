@@ -25,6 +25,16 @@ export async function requireOwnedTopic(topicId: string, userId: string) {
           material: { select: { id: true, filename: true } },
         },
       },
+      flashcards: {
+        orderBy: { position: "asc" },
+        select: {
+          id: true,
+          kind: true,
+          front: true,
+          back: true,
+          sourceMaterial: { select: { filename: true } },
+        },
+      },
       guide: {
         include: {
           readings: {

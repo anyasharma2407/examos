@@ -79,7 +79,9 @@ export default async function CoursePage({
         sources: {
           select: { id: true, excerpt: true, material: { select: { filename: true } } },
         },
-        _count: { select: { questions: { where: { archived: false } } } },
+        _count: {
+          select: { questions: { where: { archived: false } }, flashcards: true },
+        },
       },
     }),
     prisma.question.count({ where: { courseId: course.id, archived: false } }),
@@ -100,6 +102,7 @@ export default async function CoursePage({
     masteryScore: topic.masteryScore,
     attemptCount: topic.attemptCount,
     questionCount: topic._count.questions,
+    flashcardCount: topic._count.flashcards,
     sources: topic.sources.map((source) => ({
       id: source.id,
       filename: source.material.filename,
