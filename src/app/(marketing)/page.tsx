@@ -43,7 +43,7 @@ const STEPS = [
 const PRICING = [
   {
     name: "Free",
-    price: "$0",
+    price: "A$0",
     cadence: "forever",
     description: "Enough to prove it works on one subject.",
     features: ["1 course", "3 uploads", "Knowledge map", "50 practice questions per month"],
@@ -53,7 +53,7 @@ const PRICING = [
   },
   {
     name: "Student",
-    price: "$9",
+    price: "A$28",
     cadence: "per month",
     description: "For a full semester load.",
     features: [
@@ -69,7 +69,7 @@ const PRICING = [
   },
   {
     name: "Semester",
-    price: "$39",
+    price: "A$139",
     cadence: "per semester",
     description: "Everything in Student, paid once.",
     features: ["Everything in Student", "6 months access", "Priority document processing"],
@@ -224,7 +224,8 @@ export default function LandingPage() {
           <div className="max-w-2xl">
             <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">Pricing</h2>
             <p className="mt-3 text-muted-foreground text-pretty">
-              Start free. Upgrade when it is carrying a whole semester.
+              Start free. Upgrade when it is carrying a whole semester. All prices in
+              Australian dollars.
             </p>
           </div>
 
@@ -275,7 +276,8 @@ export default function LandingPage() {
           </div>
 
           <p className="mt-6 text-xs text-muted-foreground">
-            Billing is not enabled yet — every account currently has full access.
+            Prices in Australian dollars. Billing is not enabled yet — every account
+            currently has full access.
           </p>
         </div>
       </section>
