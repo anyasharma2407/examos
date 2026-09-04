@@ -187,6 +187,13 @@ model MaterialChunk {
   /// Best-effort page/slide number when the extractor can supply one.
   pageNumber Int?
 
+  /// Plain-language summary of this passage, generated on demand.
+  ///
+  /// Cached on the chunk rather than per topic: the same passage is often cited
+  /// by several topics, and summarising it once is both cheaper and consistent.
+  summary      String?
+  summarisedAt DateTime?
+
   createdAt DateTime @default(now())
 
   topicSources  TopicSource[]

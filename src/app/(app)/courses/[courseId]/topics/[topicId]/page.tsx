@@ -9,9 +9,11 @@ import {
   FileText,
   Lightbulb,
   MonitorPlay,
+  Sparkles,
 } from "lucide-react";
 import { FlashcardDeck, type DeckCard } from "@/components/flashcards/flashcard-deck";
 import { GenerateFlashcardsButton } from "@/components/flashcards/generate-flashcards-button";
+import { SummariseReadingsButton } from "@/components/materials/summarise-button";
 import { GenerateQuestionsButton } from "@/components/practice/generate-questions-button";
 import { BuildGuideButton } from "@/components/topics/build-guide-button";
 import { TutorPanel } from "@/components/topics/tutor-panel";
@@ -136,9 +138,16 @@ export default async function TopicPage({
 
           {guide.readings.length > 0 ? (
             <section aria-labelledby="readings-heading" className="space-y-3">
-              <h2 id="readings-heading" className="font-medium">
-                Read this in your material
-              </h2>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <h2 id="readings-heading" className="font-medium">
+                  Read this in your material
+                </h2>
+                <SummariseReadingsButton
+                  topicId={topic.id}
+                  path={`/courses/${courseId}/topics/${topic.id}`}
+                  anySummarised={guide.readings.some((reading) => reading.chunk?.summary)}
+                />
+              </div>
               <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border">
                 {guide.readings.map((reading) => (
                   <li
@@ -171,6 +180,18 @@ export default async function TopicPage({
                     <p className="mt-1 text-sm text-muted-foreground text-pretty">
                       {reading.reason}
                     </p>
+
+                    {reading.chunk?.summary ? (
+                      <div className="mt-3 rounded-lg border border-border bg-muted/40 px-3 py-2.5">
+                        <p className="mb-1 flex items-center gap-1.5 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+                          <Sparkles className="size-3" aria-hidden />
+                          What is in it
+                        </p>
+                        <p className="text-sm leading-relaxed whitespace-pre-wrap text-pretty">
+                          {reading.chunk.summary}
+                        </p>
+                      </div>
+                    ) : null}
                   </li>
                 ))}
               </ul>

@@ -43,7 +43,7 @@ export async function requireOwnedTopic(topicId: string, userId: string) {
             orderBy: { position: "asc" },
             include: {
               material: { select: { id: true, filename: true } },
-              chunk: { select: { index: true, content: true } },
+              chunk: { select: { index: true, content: true, summary: true } },
             },
           },
         },

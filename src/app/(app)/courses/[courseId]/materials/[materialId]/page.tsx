@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ChevronLeft, ChevronRight, ExternalLink, FileText } from "lucide-react";
+import { ChevronLeft, ChevronRight, ExternalLink, FileText, Sparkles } from "lucide-react";
+import { SummariseSectionButton } from "@/components/materials/summarise-button";
 import { Button } from "@/components/ui/button";
 import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
@@ -84,7 +85,7 @@ export default async function MaterialReaderPage({
       index: { gte: targetIndex - CONTEXT, lte: targetIndex + CONTEXT },
     },
     orderBy: { index: "asc" },
-    select: { id: true, index: true, content: true, pageNumber: true },
+    select: { id: true, index: true, content: true, pageNumber: true, summary: true },
   });
 
   const sectionUrl = (n: number) =>
@@ -201,6 +202,18 @@ export default async function MaterialReaderPage({
                     ) : null}
                   </p>
 
+                  {chunk.summary ? (
+                    <div className="mb-4 rounded-lg border border-border bg-muted/40 px-4 py-3">
+                      <p className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+                        <Sparkles className="size-3" aria-hidden />
+                        Summary
+                      </p>
+                      <p className="text-sm leading-relaxed whitespace-pre-wrap text-pretty">
+                        {chunk.summary}
+                      </p>
+                    </div>
+                  ) : null}
+
                   <p
                     className={cn(
                       "text-sm leading-relaxed whitespace-pre-wrap",
@@ -209,6 +222,16 @@ export default async function MaterialReaderPage({
                   >
                     {chunk.content}
                   </p>
+
+                  {isTarget ? (
+                    <div className="mt-4">
+                      <SummariseSectionButton
+                        chunkId={chunk.id}
+                        path={`/courses/${courseId}/materials/${material.id}`}
+                        hasSummary={Boolean(chunk.summary)}
+                      />
+                    </div>
+                  ) : null}
                 </li>
               );
             })}
