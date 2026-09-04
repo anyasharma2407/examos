@@ -22,6 +22,8 @@ export async function requireOwnedTopic(topicId: string, userId: string) {
           id: true,
           excerpt: true,
           chunkId: true,
+          // The section number is what lets a citation open the passage it quotes.
+          chunk: { select: { index: true } },
           material: { select: { id: true, filename: true } },
         },
       },

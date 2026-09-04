@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   BookOpen,
   ChevronLeft,
+  ChevronRight,
   ExternalLink,
   FileText,
   Lightbulb,
@@ -140,15 +141,31 @@ export default async function TopicPage({
               </h2>
               <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border">
                 {guide.readings.map((reading) => (
-                  <li key={reading.id} className="px-4 py-3.5">
+                  <li
+                    key={reading.id}
+                    className="relative px-4 py-3.5 transition-colors hover:bg-muted/40"
+                  >
                     <p className="flex flex-wrap items-center gap-2 text-sm font-medium">
                       <FileText className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-                      {reading.material.filename}
+                      <Link
+                        href={`/courses/${courseId}/materials/${reading.material.id}${
+                          reading.chunk ? `?section=${reading.chunk.index + 1}` : ""
+                        }`}
+                        className="underline-offset-4 hover:underline"
+                      >
+                        {/* Stretched so the whole row opens the passage. */}
+                        <span className="absolute inset-0" aria-hidden />
+                        {reading.material.filename}
+                      </Link>
                       {reading.chunk ? (
                         <span className="tabular rounded-full bg-muted px-2 py-0.5 text-[11px] font-normal text-muted-foreground">
                           section {reading.chunk.index + 1}
                         </span>
                       ) : null}
+                      <ChevronRight
+                        className="ml-auto size-4 shrink-0 text-muted-foreground"
+                        aria-hidden
+                      />
                     </p>
                     <p className="mt-1.5 text-sm text-pretty">{reading.focus}</p>
                     <p className="mt-1 text-sm text-muted-foreground text-pretty">
@@ -316,8 +333,15 @@ export default async function TopicPage({
           <ul className="space-y-2">
             {topic.sources.map((source) => (
               <li key={source.id} className="text-sm text-muted-foreground">
-                <span className="font-medium">{source.material.filename}</span> —{" "}
-                <span className="italic">“{source.excerpt}”</span>
+                <Link
+                  href={`/courses/${courseId}/materials/${source.material.id}${
+                    source.chunk ? `?section=${source.chunk.index + 1}` : ""
+                  }`}
+                  className="font-medium text-foreground underline-offset-4 hover:underline"
+                >
+                  {source.material.filename}
+                </Link>{" "}
+                — <span className="italic">“{source.excerpt}”</span>
               </li>
             ))}
           </ul>

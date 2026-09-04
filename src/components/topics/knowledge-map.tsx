@@ -2,6 +2,15 @@ import Link from "next/link";
 import { ChevronRight, FileText } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+export type KnowledgeMapSource = {
+  id: string;
+  filename: string;
+  excerpt: string;
+  materialId: string;
+  /** 1-based section in that file, when the citation resolved to one. */
+  section: number | null;
+};
+
 export type KnowledgeMapTopic = {
   id: string;
   name: string;
@@ -11,7 +20,7 @@ export type KnowledgeMapTopic = {
   attemptCount: number;
   questionCount: number;
   flashcardCount: number;
-  sources: { id: string; filename: string; excerpt: string }[];
+  sources: KnowledgeMapSource[];
 };
 
 /** Importance is a 0..1 estimate; show it as a coarse band, not a false decimal. */
@@ -95,7 +104,16 @@ export function KnowledgeMap({
                 <li key={source.id} className="flex gap-2 text-xs text-muted-foreground">
                   <FileText className="mt-0.5 size-3.5 shrink-0" aria-hidden />
                   <span className="min-w-0">
-                    <span className="font-medium">{source.filename}</span>
+                    {/* Relative so it sits above the row's stretched link. */}
+                    <Link
+                      href={`/courses/${courseId}/materials/${source.materialId}${
+                        source.section ? `?section=${source.section}` : ""
+                      }`}
+                      className="relative font-medium underline-offset-4 hover:underline"
+                    >
+                      {source.filename}
+                      {source.section ? ` · section ${source.section}` : ""}
+                    </Link>
                     <span className="block truncate italic">“{source.excerpt}”</span>
                   </span>
                 </li>

@@ -77,7 +77,12 @@ export default async function CoursePage({
         masteryScore: true,
         attemptCount: true,
         sources: {
-          select: { id: true, excerpt: true, material: { select: { filename: true } } },
+          select: {
+            id: true,
+            excerpt: true,
+            chunk: { select: { index: true } },
+            material: { select: { id: true, filename: true } },
+          },
         },
         _count: {
           select: { questions: { where: { archived: false } }, flashcards: true },
@@ -107,6 +112,8 @@ export default async function CoursePage({
       id: source.id,
       filename: source.material.filename,
       excerpt: source.excerpt,
+      materialId: source.material.id,
+      section: source.chunk ? source.chunk.index + 1 : null,
     })),
   }));
 
